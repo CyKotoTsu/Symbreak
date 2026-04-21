@@ -517,7 +517,7 @@ class Simulation:
         )
 
         # Update U using Euler's method
-        U = U + dUdt * self.dt
+        U = U + (dUdt/self.rate_diff * self.dt)
 
         # Ensure non-negative concentrations
         U = np.maximum(U, 0.0)
@@ -544,10 +544,11 @@ class Simulation:
             U (torch.Tensor): The updated morphogen concentrations.
         """
         # First induce and deduce DVE
-        prov_emve = torch.where((x[:,2]>self.dve_die) & (p_mask == 2))[0]
-        p_mask[prov_emve] = 1
-        prov_dve = torch.where((x[:,2]<self.dve_spawn) & (p_mask == 1))[0]
-        p_mask[prov_dve] = 2
+        if self.dve_spawn is not None and self.dve_die is not None:
+            prov_emve = torch.where((x[:,2]>self.dve_die) & (p_mask == 2))[0]
+            p_mask[prov_emve] = 1
+            prov_dve = torch.where((x[:,2]<self.dve_spawn) & (p_mask == 1))[0]
+            p_mask[prov_dve] = 2
 
         # Update proliferation rate from when we want cell proliferation to occur
         if tstep == (self.prolif_delay + 1) and self.prolif_rate is not None:
@@ -577,7 +578,9 @@ class Simulation:
         with torch.no_grad():
             x += -x.grad * self.dt + self.eta * torch.empty(*x.shape, dtype=self.dtype, device=self.device).normal_() * self.sqrt_dt
             # For type2 cells add additional force
-            if tstep < self.t_vstop:
+            if self.t_vstop is not None and tstep < self.t_vstop:
+                x[p_mask==2] += -self.push*q[p_mask==2]*self.dt
+            if self.t_vstop is None:
                 x[p_mask==2] += -self.push*q[p_mask==2]*self.dt
             p += -p.grad * self.dt + self.eta * torch.empty(*p.shape, dtype=self.dtype, device=self.device).normal_() * self.sqrt_dt
             q += -q.grad * self.dt + self.eta * torch.empty(*q.shape, dtype=self.dtype, device=self.device).normal_() * self.sqrt_dt
@@ -618,8 +621,7 @@ class Simulation:
             tstep += 1
             x, p, q, p_mask, U = self.time_step(x, p, q, p_mask, tstep, U)        #Advancing the simulation one timestep
 
-            if tstep % self.rate_diff == 0:
-                U = self.time_step_morph(x, p_mask, U)
+            U = self.time_step_morph(x, p_mask, U)
 
             if tstep % self.yield_every == 0 or len(x) > self.max_cells:    #Yield data if we are at a 'yield step' or if we have too many cells and the simulation is aborted
                 xx = x.detach().to("cpu").numpy().copy()                    #Copying data to CPU
